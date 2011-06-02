@@ -151,8 +151,17 @@ def pull_branches(components):
 
 def main(argv):
     if len(argv) != 2:
-        print >> sys.stderr, "Usage: vangough <URL>"
+        print >> sys.stderr, "usage: vangough <url>"
         sys.exit(1)
+
+    if os.system('which git-cl') != 0:
+        # This is not portable to Windows.
+        print >> sys.stderr, "ERROR: git-cl not in path."
+        return 1
+
+    if os.system('which upload.py') != 0:
+        print >> sys.stderr, "ERROR: upload.py not in path."
+        return 1
 
     file_url = argv[1]
     components =  parse_github_path(file_url)
