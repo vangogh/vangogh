@@ -152,7 +152,7 @@ def pull_branches(components):
 def main(argv):
     if len(argv) != 2:
         print >> sys.stderr, "usage: vangough <url>"
-        sys.exit(1)
+        return 1
 
     if os.system('which git-cl') != 0:
         # This is not portable to Windows.
@@ -182,4 +182,4 @@ def main(argv):
     clean_up(repo_path)
 
 if __name__ == "__main__":
-    main(sys.argv)
+    sys.exit(main(sys.argv))
