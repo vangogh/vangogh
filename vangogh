@@ -1,5 +1,8 @@
 #!/usr/bin/python
 
+# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
+# TODO(nathanwiegand): Add license and descriptive comments.
+
 import json
 import os
 import re
@@ -70,6 +73,17 @@ def parse_github_path(path):
             'tree': components.group(4),
             'branch': components.group(5),
             'type': 'branch'
+        }
+
+    components_regex = re.compile( "https://([^/]+)/([^/]+)/([^/]+)$")
+    components = components_regex.match(path)
+
+    if components:
+        return {
+            'host': components.group(1),
+            'user': components.group(2),
+            'project': components.group(3),
+            'type': 'repo'
         }
 
 def make_github_url(components):
@@ -183,8 +197,6 @@ def main(argv):
         mainline_components['user'] = user_project.group(1)
         mainline_components['project'] = user_project.group(2)
         mainline_components['branch'] = 'master'
-
-        print mainline_components
     else:
         print "vangogh only operates on projects which are forks."
         return 1
@@ -197,7 +209,7 @@ def main(argv):
         create_subdirectories(components, repo_path)
         pull_file_and_head_version(components, mainline_components, repo_path)
         upload_to_codereview(mainline_components)
-    else:
+    elif components['type'] == 'branch' or components['type'] == 'repo':
         pull_branches(components, mainline_components)
         upload_to_codereview(mainline_components)
     clean_up(repo_path)
