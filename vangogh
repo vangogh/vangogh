@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import json
 import os
 import re
 import shutil
@@ -8,9 +9,16 @@ import sys
 import tempfile
 import urllib
 
-MASTER_USER = 'libmv'
-CODEREVIEW_SETTINGS_FILE = ('https://github.com/libmv/libmv/raw/'
-                            'master/codereview.settings')
+def get_fork_information(components):
+    url = "https://github.com/api/v2/json/repos/show/%(user)s/%(project)s" \
+          % components
+
+    f = urllib.urlopen(url)
+    if f.getcode() != 200:
+        return {}
+    response = json.loads(f.read())
+    f.close()
+    return response
 
 def pull_from_head(repo_url, working_path):
     previous_dir = os.getcwd()
@@ -103,7 +111,7 @@ def create_subdirectories(components, path):
     os.makedirs(dirs)
     os.chdir(path + "/" + dirs)
 
-def pull_file_and_head_version(components, path):
+def pull_file_and_head_version(components, mainline_components, path):
     print "Copying %s" % components["file"]
     url = make_github_url(components)
 
@@ -114,9 +122,6 @@ def pull_file_and_head_version(components, path):
     contents = read_url(url)
 
     # pull the mainline version
-    mainline_components = components.copy()
-    mainline_components['user'] = MASTER_USER
-    mainline_components['commit'] = 'master'
     mainline_url = make_github_url(mainline_components)
 
     mainline_contents = read_url(mainline_url)
@@ -124,8 +129,9 @@ def pull_file_and_head_version(components, path):
     write_file_and_commit(file_name, mainline_contents)
     write_file_and_commit(file_name, contents)
 
-def upload_to_codereview():
-    command = 'git cl config ' + CODEREVIEW_SETTINGS_FILE
+def upload_to_codereview(mainline_components):
+    command = ('git cl config https://github.com/%(user)s/%(project)s'
+               '/raw/master/codereview.settings' % mainline_components)
     subprocess.call(command.split())
 
     command = 'git cl upload -m "review" HEAD^'
@@ -135,9 +141,7 @@ def clean_up(path):
     print "Deleting %s" % path
     shutil.rmtree(path)
 
-def pull_branches(components):
-    mainline_components = components.copy()
-    mainline_components['user'] = MASTER_USER
+def pull_branches(components, mainline_components):
     mainline_url = 'git@github.com:%(user)s/%(project)s.git' % \
         mainline_components
 
@@ -166,19 +170,36 @@ def main(argv):
     file_url = argv[1]
     components =  parse_github_path(file_url)
 
-    # Change the 'github_view_type' to 'raw' so that we get the raw file instead
-    # of the github html marked up version.
+    fork_info = get_fork_information(components)
+    mainline_components = components.copy()
 
+    if 'repository' in fork_info and 'parent' in fork_info['repository']:
+        user_project_regex = re.compile("([^/]+)/(.*)$")
+        user_project = user_project_regex.match(
+                fork_info['repository']['parent'])
+        if not user_project:
+            print "Couldn't parse response from github."
+            return 1
+        mainline_components['user'] = user_project.group(1)
+        mainline_components['project'] = user_project.group(2)
+        mainline_components['branch'] = 'master'
+
+        print mainline_components
+    else:
+        print "vangogh only operates on projects which are forks."
+        return 1
     repo_path = create_git_repo()
 
     if components['type'] == 'file':
+        # Change the 'github_view_type' to 'raw' so that we get the raw file
+        # instead of the github html marked up version.
         components['github_view_type'] = 'raw'
         create_subdirectories(components, repo_path)
-        pull_file_and_head_version(components, repo_path)
-        upload_to_codereview()
+        pull_file_and_head_version(components, mainline_components, repo_path)
+        upload_to_codereview(mainline_components)
     else:
-        pull_branches(components)
-        upload_to_codereview()
+        pull_branches(components, mainline_components)
+        upload_to_codereview(mainline_components)
     clean_up(repo_path)
 
 if __name__ == "__main__":
