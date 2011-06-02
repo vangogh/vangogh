@@ -1,0 +1,179 @@
+#!/usr/bin/python
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib
+
+MASTER_USER = 'libmv'
+CODEREVIEW_SETTINGS_FILE = ('https://github.com/libmv/libmv/raw/'
+                            'master/codereview.settings')
+
+def pull_from_head(repo_url, working_path):
+    previous_dir = os.getcwd()
+    os.chdir(working_path)
+
+    command = "git clone --depth=1 %s" % repo_url
+    process = subprocess.Popen(command.split(), stdout = sys.stdout,
+                               stderr = sys.stdout)
+    process.wait()
+    os.chdir(previous_dir)
+
+def read_url(url):
+    # pull the new version
+    f = urllib.urlopen(url)
+
+    if f.getcode() != 200:
+        return ""
+
+    contents = f.read()
+    f.close()
+    return contents
+
+def parse_github_path(path):
+    components_regex = re.compile(
+          "https://([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^#]+)#?(.*)$")
+
+    components = components_regex.match(path)
+
+    if components:
+        return {
+            'host': components.group(1),
+            'user': components.group(2),
+            'project': components.group(3),
+            'github_view_type': components.group(4),
+            'commit': components.group(5),
+            'file': components.group(6),
+            'line': components.group(7),
+            'type': 'file'
+        }
+    components_regex = re.compile(
+        "https://([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)$")
+    components = components_regex.match(path)
+
+    if components:
+        return {
+            'host': components.group(1),
+            'user': components.group(2),
+            'project': components.group(3),
+            'tree': components.group(4),
+            'branch': components.group(5),
+            'type': 'branch'
+        }
+
+def make_github_url(components):
+    if components['type'] == 'file':
+        return ("https://%(host)s/%(user)s/%(project)s/"
+                "%(github_view_type)s/%(commit)s/%(file)s") % components
+    else:
+        return ("https://%(host)s/%(user)s/%(project)s/"
+                "%(tree)s/%(branch)s") % components
+
+def create_git_repo():
+    print "Creating a git repo"
+    path = tempfile.mkdtemp()
+    previous_cwd = os.getcwd()
+    os.chdir(path)
+
+    subprocess.call("git init".split())
+
+    os.chdir(previous_cwd)
+    return path
+
+def write_file_and_commit(name, contents):
+    print "Writing a file of %d bytes" % len(contents)
+    o = open(name, 'w')
+    print >> o, contents
+    o.close()
+
+    print "Committing new file to repo"
+
+    command = "git add %s" % name
+    subprocess.call(command.split())
+    command = "git commit -am 'review'"
+    subprocess.call(command.split())
+    return True
+
+def create_subdirectories(components, path):
+    file_path = components["file"]
+    dirs = os.path.dirname(file_path)
+
+    # create the directory
+    os.chdir(path)
+    os.makedirs(dirs)
+    os.chdir(path + "/" + dirs)
+
+def pull_file_and_head_version(components, path):
+    print "Copying %s" % components["file"]
+    url = make_github_url(components)
+
+    file_path = components["file"]
+    file_name = os.path.basename(file_path)
+
+    # pull the new version
+    contents = read_url(url)
+
+    # pull the mainline version
+    mainline_components = components.copy()
+    mainline_components['user'] = MASTER_USER
+    mainline_components['commit'] = 'master'
+    mainline_url = make_github_url(mainline_components)
+
+    mainline_contents = read_url(mainline_url)
+
+    write_file_and_commit(file_name, mainline_contents)
+    write_file_and_commit(file_name, contents)
+
+def upload_to_codereview():
+    command = 'git cl config ' + CODEREVIEW_SETTINGS_FILE
+    subprocess.call(command.split())
+
+    command = 'git cl upload -m "review" HEAD^'
+    subprocess.call(command.split())
+
+def clean_up(path):
+    print "Deleting %s" % path
+    shutil.rmtree(path)
+
+def pull_branches(components):
+    mainline_components = components.copy()
+    mainline_components['user'] = MASTER_USER
+    mainline_url = 'git@github.com:%(user)s/%(project)s.git' % \
+        mainline_components
+
+    url = 'git@github.com:%(user)s/%(project)s.git' % components
+
+    command = 'git pull %s master' % mainline_url
+    subprocess.call(command.split())
+
+    command = 'git pull %s master' % url
+    subprocess.call(command.split())
+
+def main(argv):
+    if len(argv) != 2:
+        print >> sys.stderr, "Usage: vangough <URL>"
+        sys.exit(1)
+
+    file_url = argv[1]
+    components =  parse_github_path(file_url)
+
+    # Change the 'github_view_type' to 'raw' so that we get the raw file instead
+    # of the github html marked up version.
+
+    repo_path = create_git_repo()
+
+    if components['type'] == 'file':
+        components['github_view_type'] = 'raw'
+        create_subdirectories(components, repo_path)
+        pull_file_and_head_version(components, repo_path)
+        upload_to_codereview()
+    else:
+        pull_branches(components)
+        upload_to_codereview()
+    clean_up(repo_path)
+
+if __name__ == "__main__":
+    main(sys.argv)
