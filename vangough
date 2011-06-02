@@ -79,8 +79,6 @@ def create_git_repo():
     os.chdir(path)
 
     subprocess.call("git init".split())
-
-    os.chdir(previous_cwd)
     return path
 
 def write_file_and_commit(name, contents):
@@ -102,7 +100,6 @@ def create_subdirectories(components, path):
     dirs = os.path.dirname(file_path)
 
     # create the directory
-    os.chdir(path)
     os.makedirs(dirs)
     os.chdir(path + "/" + dirs)
 
