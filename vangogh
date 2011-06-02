@@ -1,7 +1,11 @@
 #!/usr/bin/python
 
 # TODO(nathanwiegand): Need to make it work with branches and commit numbers.
+
 # TODO(nathanwiegand): Add license and descriptive comments.
+
+# TODO(nathanwiegand): Get rid of the extraneous output and print the URL
+# prominentaly.
 
 import json
 import os
