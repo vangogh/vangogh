@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2.6
 
 # Copyright (c) 2011, Nathan Wiegand <nathanwiegand@gmail.com>,
 # Keir Mierle <mierle@gmail.com> All Rights Reserved.
@@ -15,11 +15,6 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
-# TODO(nathanwiegand): Add descriptive comments.
-# TODO(nathanwiegand): Get rid of the extraneous output and print the URL
-# prominentaly.
-
 __author__ = ['nathanwiegand@gmail.com', 'mierle@gmail.com']
 
 import json
@@ -30,6 +25,12 @@ import subprocess
 import sys
 import tempfile
 import urllib
+
+# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
+
+# TODO(nathanwiegand): Get rid of the extraneous output and print the URL
+# prominentaly.
+
 
 def get_fork_information(components):
     """Retrieves the JSON metadata about a project.
@@ -171,6 +172,11 @@ def make_github_url(components):
                 "%(tree)s/%(branch)s") % components
 
 def create_git_repo():
+    """Creates a fresh Git repository in a temporary directory.
+
+    Returns:
+        String path to the new Git repository.
+    """
     print "Creating a git repo"
     path = tempfile.mkdtemp()
     previous_cwd = os.getcwd()
@@ -180,6 +186,15 @@ def create_git_repo():
     return path
 
 def write_file_and_commit(name, contents):
+    """Create a file with a specified name and contents, and then commit it to
+    the repository.
+
+    Args:
+        name: The string file name of the new file
+        contents: The string contents of the new file
+    Returns:
+        True on success
+    """
     print "Writing a file of %d bytes" % len(contents)
     o = open(name, 'w')
     print >> o, contents
@@ -194,6 +209,12 @@ def write_file_and_commit(name, contents):
     return True
 
 def create_subdirectories(components, path):
+    """Creates subdirectories corresponding to the directory structure of the
+    GitHub repository.
+
+    Returns:
+      Nothing
+    """
     file_path = components["file"]
     dirs = os.path.dirname(file_path)
 
@@ -202,6 +223,12 @@ def create_subdirectories(components, path):
     os.chdir(path + "/" + dirs)
 
 def pull_file_and_head_version(components, mainline_components, path):
+    """Copies a file from two branches and commits them to the same repo.
+
+    This copyies the 'original' file to the repo, followed by the 'new' file.
+    Because of this, the diff between versions of this file will now correspond
+    to the diff between the two versions: 'original' and 'new'.
+    """
     print "Copying %s" % components["file"]
     url = make_github_url(components)
 
@@ -220,6 +247,15 @@ def pull_file_and_head_version(components, mainline_components, path):
     write_file_and_commit(file_name, contents)
 
 def upload_to_codereview(mainline_components):
+    """Uploads the diffs to the Reitveld instance.
+
+    Args:
+        mainline_components: Dict containing the fields 'user' and 'project'
+        which correspond to the mainline project's username and project.
+    """
+
+    # TODO(nathanwiegand): Change this so that first it checks to see if there's a
+    # project wide file, and if not, it defaults to codereview.appspot.com
     command = ('git cl config https://github.com/%(user)s/%(project)s'
                '/raw/master/codereview.settings' % mainline_components)
     subprocess.call(command.split())
@@ -228,10 +264,26 @@ def upload_to_codereview(mainline_components):
     subprocess.call(command.split())
 
 def clean_up(path):
+    """Delete the temporary directory specified by 'path'
+
+    Args:
+        path: String path to the temporary directory which will be deleted.
+    """
     print "Deleting %s" % path
     shutil.rmtree(path)
 
 def pull_branches(components, mainline_components):
+    """Pulls two branches, one ontop of the other.
+
+    This allows us to diff all files in one branch, 'components', with the
+    another, 'original'.
+
+    Args:
+        components: Dict specifying the new branch. Must contain 'user' and
+              'project'
+        mainline_components: Dict specifying the original branch. Must contain
+              'user' and 'project'
+    """
     mainline_url = 'git@github.com:%(user)s/%(project)s.git' % \
         mainline_components
 
@@ -248,6 +300,8 @@ def main(argv):
         print >> sys.stderr, "usage: vangough <url>"
         return 1
 
+    # TODO(nathanwiegand): 'which' isn't as portable as you'd think. We should
+    # search the path ourselves.
     if os.system('which git-cl') != 0:
         # This is not portable to Windows.
         print >> sys.stderr, "ERROR: git-cl not in path."
