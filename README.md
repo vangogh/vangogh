@@ -24,7 +24,9 @@ REQUIREMENTS
 vangogh currently only supports Unix/Linux/OSX
 
 Python 2.x
+
 git-cl: http://neugierig.org/software/git/?r=git-cl
+
 git: http://git-scm.com
 
 
@@ -39,19 +41,26 @@ Put vangogh in you path.
 SETUP
 -----
 Add a file to your project called 'codereview.settings' and include:
+
   CODE_REVIEW_SERVER: codereview.appspot.com
+
 or another Rietveld location.
 
 
 USAGE
 -----
 vangogh http://github.com/<username>/<project>
+
 vangogh http://github.com/<username>/<project>/commit/<commit_number>
+
 vangogh http://github.com/<username>/<project>/tree/master
+
 vangogh http://github.com/<username>/<project>/blob/<commit_number>/<path/to/a/file.ext>
 
 References
 ----------
 [1] rietveld on Google Code: http://code.google.com/p/rietveld/
+
 [2] An Open Source App: Rietveld Code Review Tool: http://code.google.com/appengine/articles/rietveld.html
+
 [3] Mondrian Code Review On The Web: http://www.youtube.com/watch?v=sMql3Di4Kgc
