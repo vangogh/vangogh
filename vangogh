@@ -152,6 +152,17 @@ def parse_github_path(url):
         }
 
 def make_github_url(components):
+    """Constructs a GitHub URL to either a file or project.
+
+    Given a dictionary of components that contains the fields 'user', 'host',
+    and 'projects' (optionally 'commit' and 'file'), generate a GitHub URL.
+
+    Args:
+        components: A dictionary that must contain 'host', 'user', and
+        'project'.
+    Returns:
+        String URL to a GitHub project or a GitHub file.
+    """
     if components['type'] == 'file':
         return ("https://%(host)s/%(user)s/%(project)s/"
                 "%(github_view_type)s/%(commit)s/%(file)s") % components
