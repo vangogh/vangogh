@@ -20,6 +20,8 @@
 # TODO(nathanwiegand): Get rid of the extraneous output and print the URL
 # prominentaly.
 
+__author__ = ['nathanwiegand@gmail.com', 'mierle@gmail.com']
+
 import json
 import os
 import re
@@ -30,6 +32,20 @@ import tempfile
 import urllib
 
 def get_fork_information(components):
+    """Retrieves the JSON metadata about a project.
+
+    The GitHub API allows us to retrieve meta-data about a particular user's
+    project.  This function takes a dictionary, 'components', which must have
+    project and user defined, corresponding to the GitHub username and the
+    GitHub project name.
+
+    Args:
+        components: A dictionary which contains 'user' and 'project'
+    Returns:
+        A dict corresponding to the JSON metadata returned by GitHub for this
+        project. An example of the meta data returned can be seen by calling
+        get_fork_information({'user': 'vangogh', 'project':'vangogh'})
+    """
     url = "https://github.com/api/v2/json/repos/show/%(user)s/%(project)s" \
           % components
 
@@ -51,6 +67,18 @@ def pull_from_head(repo_url, working_path):
     os.chdir(previous_dir)
 
 def read_url(url):
+    """Return the contents of a URL.
+
+    This is a simple helper function which downloads a URL, and if the HTTP
+    status was OK (200) then it returns the contents of that URL. Otherwise it
+    returns an empty string.
+
+    Args:
+        url: The URL to fetch
+    Returns:
+        String contents of the URL If the URL was fetched successfully or empty
+        string otherwise.
+    """
     # pull the new version
     f = urllib.urlopen(url)
 
@@ -61,11 +89,31 @@ def read_url(url):
     f.close()
     return contents
 
-def parse_github_path(path):
+def parse_github_path(url):
+    """Interprets a GitHub URL.
+
+    GitHub URLs encode information about a branch in a human readable format.
+    This function parses out that infomation and returns it in a dictionary.
+
+    Args:
+        url: The GitHub URL of the project, a branch, a commit, or a file.
+    Returns:
+        A dictionary which encodes infomration about the project. An example:
+          {'host': 'github.com',
+           'user': 'vangogh',
+           'project': 'vangogh',
+           'github_view_type': 'blob',
+           'file': 'vangogh',
+           'commit': 'master',
+           'line': '',
+           'type': 'file',
+           'github_view_type': 'blob'
+          }
+    """
     components_regex = re.compile(
           "https://([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^#]+)#?(.*)$")
 
-    components = components_regex.match(path)
+    components = components_regex.match(url)
 
     if components:
         return {
@@ -80,7 +128,7 @@ def parse_github_path(path):
         }
     components_regex = re.compile(
         "https://([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)$")
-    components = components_regex.match(path)
+    components = components_regex.match(url)
 
     if components:
         return {
@@ -93,7 +141,7 @@ def parse_github_path(path):
         }
 
     components_regex = re.compile( "https://([^/]+)/([^/]+)/([^/]+)$")
-    components = components_regex.match(path)
+    components = components_regex.match(url)
 
     if components:
         return {
