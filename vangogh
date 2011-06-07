@@ -31,6 +31,25 @@ import sys
 import tempfile
 import urllib
 
+def check_if_executable_exists(name):
+    """Checks if an executable named 'name' is in the PATH.
+
+    This is necessary because the 'which' command isn't universally portable.
+
+    Args:
+        name: String name of a binary, e.g. 'which'
+    Returns:
+        True if there is an executable with this name anywhere in the system
+        PATH.
+    """
+    for p in os.getenv("PATH").split(os.pathsep):
+        full_path = "%s/%s" % (p, name)
+
+        if os.path.exists(full_path) and os.access(full_path, os.X_OK):
+            return True
+    return False
+
+
 def get_fork_information(components):
     """Retrieves the JSON metadata about a project.
 
@@ -237,12 +256,11 @@ def main(argv):
         print >> sys.stderr, "usage: vangough <url>"
         return 1
 
-    if os.system('which git-cl') != 0:
-        # This is not portable to Windows.
+    if not check_if_executable_exists('git-cl'):
         print >> sys.stderr, "ERROR: git-cl not in path."
         return 1
 
-    if os.system('which upload.py') != 0:
+    if not check_if_executable_exists('upload.py'):
         print >> sys.stderr, "ERROR: upload.py not in path."
         return 1
 
