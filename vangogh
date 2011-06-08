@@ -31,6 +31,15 @@ except:
   sys.path.append("third_party")
   import third_party.simplejson as json
 
+def git(commands, use_stdout = False):
+    os.putenv('EDITOR', 'true')
+    c = "git %s" % commands
+    f = subprocess.PIPE if not use_stdout else sys.stdout
+    process = subprocess.Popen(c.split(), stdout = f,
+                               stderr = f)
+    output = process.stdout.read() if process.stdout else ""
+    process.wait()
+    return output
 
 def check_if_executable_exists(name):
     """Checks if an executable named 'name' is in the PATH.
@@ -85,10 +94,11 @@ def pull_from_head(repo_url, working_path):
     previous_dir = os.getcwd()
     os.chdir(working_path)
 
-    command = "git clone --depth=1 %s" % repo_url
     process = subprocess.Popen(command.split(), stdout = sys.stdout,
                                stderr = sys.stdout)
     process.wait()
+    git("clone --depth=1 %s" % repo_url)
+
     os.chdir(previous_dir)
 
 def read_url(url):
@@ -214,12 +224,12 @@ def create_git_repo():
     Returns:
         String path to the new Git repository.
     """
-    print "Creating a git repo"
+    print "Creating a temporary git repository."
     path = tempfile.mkdtemp()
     previous_cwd = os.getcwd()
     os.chdir(path)
 
-    subprocess.call("git init".split())
+    git("init")
     return path
 
 def write_file_and_commit(name, contents):
@@ -239,10 +249,9 @@ def write_file_and_commit(name, contents):
 
     print "Committing new file to repo"
 
-    command = "git add %s" % name
-    subprocess.call(command.split())
-    command = "git commit -am 'review'"
-    subprocess.call(command.split())
+    git("add %s" % name)
+
+    git("commit -am 'review'")
     return True
 
 def create_subdirectories(components, path):
@@ -293,16 +302,22 @@ def upload_to_codereview(components, mainline_components):
 
     # TODO(nathanwiegand): Change this so that first it checks to see if there's
     # a project wide file, and if not, it defaults to codereview.appspot.com
-    command = ('git cl config https://github.com/%(user)s/%(project)s'
-               '/raw/master/codereview.settings' % mainline_components)
-    subprocess.call(command.split())
+    git('cl config https://github.com/%(user)s/%(project)s'
+        '/raw/master/codereview.settings' % mainline_components)
 
     reviewer_line = ""
     if "email" in components:
         reviewer_line = "-r %s" % components['email']
 
-    command = 'git cl upload %s master' % reviewer_line
-    subprocess.call(command.split())
+    output = git('cl upload %s master' % reviewer_line)
+
+    # TODO(nathanwiegand): This is sort of hacky.  Can we latch on to the git-cl
+    # directly?
+    url_line_regex = re.compile("Issue created. URL: (.*$)")
+    for line in output.split("\n"):
+        c = url_line_regex.match(line)
+        if c:
+          print "\n\t", c.group(1), "\n"
 
 def clean_up(path):
     """Delete the temporary directory specified by 'path'
@@ -310,7 +325,6 @@ def clean_up(path):
     Args:
         path: String path to the temporary directory which will be deleted.
     """
-    print "Deleting %s" % path
     shutil.rmtree(path)
 
 def pull_branches(components, mainline_components):
@@ -330,15 +344,12 @@ def pull_branches(components, mainline_components):
 
     url = 'git@github.com:%(user)s/%(project)s.git' % components
     print "Pulling from: " , mainline_url
-    command = 'git pull %s master' % mainline_url
-    subprocess.call(command.split())
+    git('pull %s master' % mainline_url)
 
-    command = 'git checkout -b %s ' % components['user']
-    subprocess.call(command.split())
+    git('checkout -b %s ' % components['user'])
 
     print "Pulling from: " , url
-    command = 'git pull %s master' % url
-    subprocess.call(command.split())
+    git('pull %s master' % url)
 
 def get_user_information(components):
     user_info = read_json_url("https://api.github.com/users/%(user)s" %
