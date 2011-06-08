@@ -33,10 +33,12 @@ except:
 
 # TODO(nathanwiegand): Need to make it work with branches and commit numbers.
 
-CWD = os.getcwd()
+vangogh_path = os.path.join(sys.path[0], os.path.basename(sys.argv[0]))
 
 def git(commands, use_stdout = False):
-    os.putenv('EDITOR', '%s/vangogh --cat_with_default' % CWD)
+    vangogh_editor = '%s --cat_with_default' % vangogh_path
+    os.environ['EDITOR'] = vangogh_editor
+
     c = "git %s" % commands
     f = subprocess.PIPE if not use_stdout else sys.stdout
     process = subprocess.Popen(c.split(), stdout = f,
