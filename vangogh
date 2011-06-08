@@ -31,8 +31,12 @@ except:
   sys.path.append("third_party")
   import third_party.simplejson as json
 
+# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
+
+CWD = os.getcwd()
+
 def git(commands, use_stdout = False):
-    os.putenv('EDITOR', 'true')
+    os.putenv('EDITOR', '%s/vangogh --cat_with_default' % CWD)
     c = "git %s" % commands
     f = subprocess.PIPE if not use_stdout else sys.stdout
     process = subprocess.Popen(c.split(), stdout = f,
@@ -58,12 +62,6 @@ def check_if_executable_exists(name):
         if os.path.exists(full_path) and os.access(full_path, os.X_OK):
             return True
     return False
-
-# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
-
-# TODO(nathanwiegand): Get rid of the extraneous output and print the URL
-# prominentaly.
-
 
 def get_fork_information(components):
     """Retrieves the JSON metadata about a project.
@@ -262,6 +260,10 @@ def create_subdirectories(components, path):
       Nothing
     """
     file_path = components["file"]
+    if file_path.find(os.sep) < 0:
+      # This is already a file
+      os.chdir(path)
+      return
     dirs = os.path.dirname(file_path)
 
     # create the directory
@@ -292,7 +294,8 @@ def pull_file_and_head_version(components, mainline_components, path):
     write_file_and_commit(file_name, mainline_contents)
     write_file_and_commit(file_name, contents)
 
-def upload_to_codereview(components, mainline_components):
+def upload_to_codereview(components, mainline_components,
+                         override_message = None):
     """Uploads the diffs to the Reitveld instance.
 
     Args:
@@ -309,7 +312,9 @@ def upload_to_codereview(components, mainline_components):
     if "email" in components:
         reviewer_line = "-r %s" % components['email']
 
-    output = git('cl upload %s master' % reviewer_line)
+    diff = "master" if components['type'] != "file" else "HEAD^"
+
+    output = git('cl upload %s %s' % (reviewer_line, diff))
 
     # TODO(nathanwiegand): This is sort of hacky.  Can we latch on to the git-cl
     # directly?
@@ -356,7 +361,32 @@ def get_user_information(components):
                               components)
     return user_info
 
+def cat_with_default(argv):
+    if len(argv) != 2:
+        print >> sys.stderr, ("usage: vangogh --cat_with_default "
+                              "requires exactly one argument")
+        return 1
+    file_name = argv[1]
+
+    if not os.path.exists(file_name):
+        print >> sys.stderr, ("%s doesn't exist" % file_name)
+        return 1
+    f = open(file_name, 'r')
+    contents = f.read()
+    f.close()
+
+    stripcomment_re = re.compile(r'^#.*$', re.MULTILINE)
+    contents = stripcomment_re.sub('', contents).strip()
+    if not contents:
+        f = open(file_name, 'w')
+        print >> f, "A vangogh code review"
+        f.close()
+    return 0
+
 def main(argv):
+    if len(argv) > 2 and argv[1] == "--cat_with_default":
+        return cat_with_default(argv[1:])
+
     if len(argv) != 2:
         print >> sys.stderr, "usage: vangough <url>"
         return 1
@@ -389,7 +419,7 @@ def main(argv):
     mainline_components['branch'] = 'master'
 
     user_info = get_user_information(components)
-    mainline_user_info = get_user_information(components)
+    mainline_user_info = get_user_information(mainline_components)
 
     if 'email' in user_info:
         components['email'] = user_info['email']
@@ -403,9 +433,11 @@ def main(argv):
         # Change the 'github_view_type' to 'raw' so that we get the raw file
         # instead of the github html marked up version.
         components['github_view_type'] = 'raw'
+        mainline_components['github_view_type'] = 'raw'
         create_subdirectories(components, repo_path)
         pull_file_and_head_version(components, mainline_components, repo_path)
-        upload_to_codereview(components, mainline_components)
+        upload_to_codereview(components, mainline_components,
+                             override_message = "file")
     elif components['type'] == 'branch' or components['type'] == 'repo':
         pull_branches(components, mainline_components)
         upload_to_codereview(components, mainline_components)
