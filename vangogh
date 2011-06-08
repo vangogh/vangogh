@@ -1,4 +1,4 @@
-#!/usr/bin/python2.6
+#!/usr/bin/python
 
 # Copyright (c) 2011, Nathan Wiegand <nathanwiegand@gmail.com>,
 # Keir Mierle <mierle@gmail.com> All Rights Reserved.
@@ -17,7 +17,6 @@
 
 __author__ = ['nathanwiegand@gmail.com', 'mierle@gmail.com']
 
-import json
 import os
 import re
 import shutil
@@ -25,6 +24,13 @@ import subprocess
 import sys
 import tempfile
 import urllib
+
+try:
+  import json
+except:
+  sys.path.append("third_party")
+  import third_party.simplejson as json
+
 
 def check_if_executable_exists(name):
     """Checks if an executable named 'name' is in the PATH.
@@ -107,6 +113,19 @@ def read_url(url):
     contents = f.read()
     f.close()
     return contents
+
+def read_json_url(url):
+    """Reads the contents of a URL and interprets the JSON response.
+
+    Args:
+        url: The URL to fetch
+    Returns:
+        Dictionary equivalent of the JSON contents of the URL
+    """
+    contents = read_url(url)
+    if contents:
+        return json.loads(contents)
+    return {}
 
 def parse_github_path(url):
     """Interprets a GitHub URL.
@@ -264,7 +283,7 @@ def pull_file_and_head_version(components, mainline_components, path):
     write_file_and_commit(file_name, mainline_contents)
     write_file_and_commit(file_name, contents)
 
-def upload_to_codereview(mainline_components):
+def upload_to_codereview(components, mainline_components):
     """Uploads the diffs to the Reitveld instance.
 
     Args:
@@ -278,7 +297,11 @@ def upload_to_codereview(mainline_components):
                '/raw/master/codereview.settings' % mainline_components)
     subprocess.call(command.split())
 
-    command = 'git cl upload -m "review" HEAD^'
+    reviewer_line = ""
+    if "email" in components:
+        reviewer_line = "-r %s" % components['email']
+
+    command = 'git cl upload %s master' % reviewer_line
     subprocess.call(command.split())
 
 def clean_up(path):
@@ -306,12 +329,21 @@ def pull_branches(components, mainline_components):
         mainline_components
 
     url = 'git@github.com:%(user)s/%(project)s.git' % components
-
+    print "Pulling from: " , mainline_url
     command = 'git pull %s master' % mainline_url
     subprocess.call(command.split())
 
+    command = 'git checkout -b %s ' % components['user']
+    subprocess.call(command.split())
+
+    print "Pulling from: " , url
     command = 'git pull %s master' % url
     subprocess.call(command.split())
+
+def get_user_information(components):
+    user_info = read_json_url("https://api.github.com/users/%(user)s" %
+                              components)
+    return user_info
 
 def main(argv):
     if len(argv) != 2:
@@ -332,19 +364,28 @@ def main(argv):
     fork_info = get_fork_information(components)
     mainline_components = components.copy()
 
-    if 'repository' in fork_info and 'parent' in fork_info['repository']:
-        user_project_regex = re.compile("([^/]+)/(.*)$")
-        user_project = user_project_regex.match(
-                fork_info['repository']['parent'])
-        if not user_project:
-            print "Couldn't parse response from github."
-            return 1
-        mainline_components['user'] = user_project.group(1)
-        mainline_components['project'] = user_project.group(2)
-        mainline_components['branch'] = 'master'
-    else:
+    if 'repository' not in fork_info or 'parent' not in fork_info['repository']:
         print "vangogh only operates on projects which are forks."
         return 1
+    user_project_regex = re.compile("([^/]+)/(.*)$")
+    user_project = user_project_regex.match(
+            fork_info['repository']['parent'])
+    if not user_project:
+        print "Couldn't parse response from github."
+        return 1
+    mainline_components['user'] = user_project.group(1)
+    mainline_components['project'] = user_project.group(2)
+    mainline_components['branch'] = 'master'
+
+    user_info = get_user_information(components)
+    mainline_user_info = get_user_information(components)
+
+    if 'email' in user_info:
+        components['email'] = user_info['email']
+
+    if 'email' in mainline_user_info:
+        mainline_components['email'] = mainline_user_info['email']
+
     repo_path = create_git_repo()
 
     if components['type'] == 'file':
@@ -353,10 +394,10 @@ def main(argv):
         components['github_view_type'] = 'raw'
         create_subdirectories(components, repo_path)
         pull_file_and_head_version(components, mainline_components, repo_path)
-        upload_to_codereview(mainline_components)
+        upload_to_codereview(components, mainline_components)
     elif components['type'] == 'branch' or components['type'] == 'repo':
         pull_branches(components, mainline_components)
-        upload_to_codereview(mainline_components)
+        upload_to_codereview(components, mainline_components)
     clean_up(repo_path)
 
 if __name__ == "__main__":
