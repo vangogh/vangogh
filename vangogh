@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python2.6
 
 # Copyright (c) 2011, Nathan Wiegand <nathanwiegand@gmail.com>,
 # Keir Mierle <mierle@gmail.com> All Rights Reserved.
@@ -15,6 +15,21 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+################################################################################
+# TODO(nathanwiegand):
+# Need to do the following before launch:
+#    1.) Make it work with branches and commit numbers.
+#    2.) Add support for pull request URLs
+#        (e.g. https://github.com/vangogh/vangogh/pull/1)
+#
+# Need to do the following sometime soon:
+#    1.) Have the decription auto-populated with only the commit information
+#        about the commits since the last merge.
+#    2.) Allow the user to override the reviewer line.
+#    3.) Have the Rietveld server read from a config (search local, then in the
+#        repo) and if none then default to http://codereview.appspot.com
+################################################################################
+
 __author__ = ['nathanwiegand@gmail.com', 'mierle@gmail.com']
 
 import os
@@ -26,48 +41,29 @@ import tempfile
 import urllib2
 
 try:
-  import json
+    import upload
 except:
-  sys.path.append(os.path.join(sys.path[0], "third_party"))
-  import simplejson as json
+    print >> sys.stderr, "Missing upload.py."
+    print >> sys.stderr, "Try http://codereview.appspot.com/static/upload.py"
+    sys.exit(1)
 
-vangogh_path = os.path.join(sys.path[0], os.path.basename(sys.argv[0]))
-
-# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
-
-# TODO(nathanwiegand): There's currently an issue dealing with git-cl for the
-# first time. Git-cl calls upload.py. Upload.py accepts a "--email" argument
-# which in turn corresponds to the username to be used to upload to the Reitveld
-# instance.  The prompt is printed to STDOUT. After this, the password prompt
-# goes to STDERR. Unfortunately, there is no way to pass the "--email" flag to
-# upload.py from git-cl. So, as a result, the only way we can get the prompt
-# right now is to just print out the STDOUT and STDERR for the call to git-cl.
-# This means that there's lots of superfluous output and that it's hard to spot
-# the URL to the codereview.
-#
-# In order to fix this, there are a couple of options. 1. Read STDOUT a couple of bytes
-# at a time until the prompt occurs, then skip it. 2. Submit a patch to
-# upload.py to make the email prompt be STDERR for parallelism with the password
-# prompt.  3. Forego git-cl entirely. There's really only one call to it anyway.
-# The added benefit would be that we could remove the dependency on git-cl.
+try:
+    import json
+except:
+    sys.path.append(os.path.join(sys.path[0], "third_party"))
+    import simplejson as json
 
 def git(commands, use_stdout = False):
-    vangogh_editor = '%s --cat_with_default' % vangogh_path
-    os.environ['EDITOR'] = vangogh_editor
-
     c = "git %s" % commands
-    f = sys.stderr
-    f_error = sys.stderr
+    f = sys.stdout
     if not use_stdout:
-        f = subprocess.PIPE 
-        f_error = f
-    process = subprocess.Popen(c.split(), stdout = f, stderr = f_error)
+        f = subprocess.PIPE
+    process = subprocess.Popen(c.split(), stdout = f, stderr = f)
 
     output = ""
     if process.stdout:
-        output = process.stdout.read()
-    if process.stderr:
-        pass
+        stdout_output, stderr_output = process.communicate()
+        output = stdout_output
     process.wait()
     return output
 
@@ -110,22 +106,11 @@ def get_fork_information(components):
     request = urllib2.Request(url)
     try:
       f = urllib2.urlopen(request)
-    except urllib2.URLError, e:
+    except urllib2.URLError:
       return {}
     response = json.loads(f.read())
     f.close()
     return response
-
-def pull_from_head(repo_url, working_path):
-    previous_dir = os.getcwd()
-    os.chdir(working_path)
-
-    process = subprocess.Popen(command.split(), stdout = sys.stdout,
-                               stderr = sys.stdout)
-    process.wait()
-    git("clone --depth=1 %s" % repo_url)
-
-    os.chdir(previous_dir)
 
 def read_url(url):
     """Return the contents of a URL.
@@ -144,7 +129,7 @@ def read_url(url):
     request = urllib2.Request(url)
     try:
       f = urllib2.urlopen(request)
-    except urllib2.URLError, e:
+    except urllib2.URLError:
       return ""
 
     contents = f.read()
@@ -253,7 +238,6 @@ def create_git_repo():
     """
     print "Creating a temporary git repository."
     path = tempfile.mkdtemp()
-    previous_cwd = os.getcwd()
     os.chdir(path)
 
     git("init")
@@ -299,7 +283,7 @@ def create_subdirectories(components, path):
     os.makedirs(dirs)
     os.chdir(path + "/" + dirs)
 
-def pull_file_and_head_version(components, mainline_components, path):
+def pull_file_and_head_version(components, mainline_components):
     """Copies a file from two branches and commits them to the same repo.
 
     This copyies the 'original' file to the repo, followed by the 'new' file.
@@ -323,41 +307,44 @@ def pull_file_and_head_version(components, mainline_components, path):
     write_file_and_commit(file_name, mainline_contents)
     write_file_and_commit(file_name, contents)
 
-def upload_to_codereview(components, mainline_components,
-                         override_message = None):
+def upload_to_codereview(components):
     """Uploads the diffs to the Reitveld instance.
 
     Args:
         mainline_components: Dict containing the fields 'user' and 'project'
         which correspond to the mainline project's username and project.
     """
-
-    # TODO(nathanwiegand): Change this so that first it checks to see if there's
-    # a project wide file, and if not, it defaults to codereview.appspot.com
-    git('cl config https://github.com/%(user)s/%(project)s'
-        '/raw/master/codereview.settings' % mainline_components)
-
-    reviewer_line = ""
-    if "email" in components:
-        reviewer_line = "-r %s" % (components['email'])
     diff = "HEAD^"
     if components['type'] != "file":
         diff = "master"
 
-    # TODO(nathanwiegand): Change this to call upload.py directly. The command
-    # is
-    #     upload.py --message="short message" --description="longer message" \
-    #           --reviewer="reviewer@" --email="rietveld email account" \
-    #           --server="settings.GetServer()", diff
-    output = git('cl upload %s %s' % (reviewer_line, diff), use_stdout = True)
+    description = git('log --pretty=format:%s ' + diff)
+    subject = ""
+    if len(description.splitlines()) > 0:
+        subject = description.splitlines()[0]
 
-    # TODO(nathanwiegand): This is sort of hacky.  Can we latch on to the git-cl
-    # directly?
-    url_line_regex = re.compile("Issue created. URL: (.*$)")
-    for line in output.split("\n"):
-        c = url_line_regex.match(line)
-        if c:
-          print "\n\t", c.group(1), "\n"
+    cc = ""
+    # TODO(nathanwiegand): Have both of these values be overridable.
+    user_email = git('config --global user.email')
+    server = 'codereview.appspot.com'
+    # TODO(nathanwiegand): Is this the correct thing to do? To make the person
+    # who ran the script the reviewer and the person who owns the target repo be
+    # CCd?
+    if "email" in components:
+        cc = (components['email'])
+
+    issue, patchset = upload.RealMain(['upload',
+                                       '--assume_yes',
+                                       '--server', server,
+                                       '--email', user_email,
+                                       '--message', subject,
+                                       '--description', description,
+                                       '--reviewers', user_email,
+                                       '--cc', cc,
+                                       '--quiet',
+                                       diff])
+    print "Successfuly created codereview at:"
+    print "    http://%s/%s" % (server, issue)
 
 def clean_up(path):
     """Delete the temporary directory specified by 'path'
@@ -426,12 +413,8 @@ def main(argv):
         print >> sys.stderr, "usage: vangough <url>"
         return 1
 
-    if not check_if_executable_exists('git-cl'):
-        print >> sys.stderr, "ERROR: git-cl not in path."
-        return 1
-
-    if not check_if_executable_exists('upload.py'):
-        print >> sys.stderr, "ERROR: upload.py not in path."
+    if not check_if_executable_exists('git'):
+        print >> sys.stderr, "ERROR: git not in path."
         return 1
 
     file_url = argv[1]
@@ -470,12 +453,11 @@ def main(argv):
         components['github_view_type'] = 'raw'
         mainline_components['github_view_type'] = 'raw'
         create_subdirectories(components, repo_path)
-        pull_file_and_head_version(components, mainline_components, repo_path)
-        upload_to_codereview(components, mainline_components,
-                             override_message = "file")
+        pull_file_and_head_version(components, mainline_components)
+        upload_to_codereview(components)
     elif components['type'] == 'branch' or components['type'] == 'repo':
         pull_branches(components, mainline_components)
-        upload_to_codereview(components, mainline_components)
+        upload_to_codereview(components)
     clean_up(repo_path)
 
 if __name__ == "__main__":
