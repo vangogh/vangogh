@@ -344,6 +344,11 @@ def upload_to_codereview(components, mainline_components,
     if components['type'] != "file":
         diff = "master"
 
+    # TODO(nathanwiegand): Change this to call upload.py directly. The command
+    # is
+    #     upload.py --message="short message" --description="longer message" \
+    #           --reviewer="reviewer@" --email="rietveld email account" \
+    #           --server="settings.GetServer()", diff
     output = git('cl upload %s %s' % (reviewer_line, diff), use_stdout = True)
 
     # TODO(nathanwiegand): This is sort of hacky.  Can we latch on to the git-cl
