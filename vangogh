@@ -23,27 +23,51 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib
+import urllib2
 
 try:
   import json
 except:
-  sys.path.append("third_party")
-  import third_party.simplejson as json
+  sys.path.append(os.path.join(sys.path[0], "third_party"))
+  import simplejson as json
+
+vangogh_path = os.path.join(sys.path[0], os.path.basename(sys.argv[0]))
 
 # TODO(nathanwiegand): Need to make it work with branches and commit numbers.
 
-vangogh_path = os.path.join(sys.path[0], os.path.basename(sys.argv[0]))
+# TODO(nathanwiegand): There's currently an issue dealing with git-cl for the
+# first time. Git-cl calls upload.py. Upload.py accepts a "--email" argument
+# which in turn corresponds to the username to be used to upload to the Reitveld
+# instance.  The prompt is printed to STDOUT. After this, the password prompt
+# goes to STDERR. Unfortunately, there is no way to pass the "--email" flag to
+# upload.py from git-cl. So, as a result, the only way we can get the prompt
+# right now is to just print out the STDOUT and STDERR for the call to git-cl.
+# This means that there's lots of superfluous output and that it's hard to spot
+# the URL to the codereview.
+#
+# In order to fix this, there are a couple of options. 1. Read STDOUT a couple of bytes
+# at a time until the prompt occurs, then skip it. 2. Submit a patch to
+# upload.py to make the email prompt be STDERR for parallelism with the password
+# prompt.  3. Forego git-cl entirely. There's really only one call to it anyway.
+# The added benefit would be that we could remove the dependency on git-cl.
 
 def git(commands, use_stdout = False):
     vangogh_editor = '%s --cat_with_default' % vangogh_path
     os.environ['EDITOR'] = vangogh_editor
 
     c = "git %s" % commands
-    f = subprocess.PIPE if not use_stdout else sys.stdout
-    process = subprocess.Popen(c.split(), stdout = f,
-                               stderr = f)
-    output = process.stdout.read() if process.stdout else ""
+    f = sys.stderr
+    f_error = sys.stderr
+    if not use_stdout:
+        f = subprocess.PIPE 
+        f_error = f
+    process = subprocess.Popen(c.split(), stdout = f, stderr = f_error)
+
+    output = ""
+    if process.stdout:
+        output = process.stdout.read()
+    if process.stderr:
+        pass
     process.wait()
     return output
 
@@ -83,9 +107,11 @@ def get_fork_information(components):
     url = "https://github.com/api/v2/json/repos/show/%(user)s/%(project)s" \
           % components
 
-    f = urllib.urlopen(url)
-    if f.getcode() != 200:
-        return {}
+    request = urllib2.Request(url)
+    try:
+      f = urllib2.urlopen(request)
+    except urllib2.URLError, e:
+      return {}
     response = json.loads(f.read())
     f.close()
     return response
@@ -115,10 +141,11 @@ def read_url(url):
         string otherwise.
     """
     # pull the new version
-    f = urllib.urlopen(url)
-
-    if f.getcode() != 200:
-        return ""
+    request = urllib2.Request(url)
+    try:
+      f = urllib2.urlopen(request)
+    except urllib2.URLError, e:
+      return ""
 
     contents = f.read()
     f.close()
@@ -312,11 +339,12 @@ def upload_to_codereview(components, mainline_components,
 
     reviewer_line = ""
     if "email" in components:
-        reviewer_line = "-r %s" % components['email']
+        reviewer_line = "-r %s" % (components['email'])
+    diff = "HEAD^"
+    if components['type'] != "file":
+        diff = "master"
 
-    diff = "master" if components['type'] != "file" else "HEAD^"
-
-    output = git('cl upload %s %s' % (reviewer_line, diff))
+    output = git('cl upload %s %s' % (reviewer_line, diff), use_stdout = True)
 
     # TODO(nathanwiegand): This is sort of hacky.  Can we latch on to the git-cl
     # directly?
