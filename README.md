@@ -23,19 +23,17 @@ REQUIREMENTS
 ------------
 vangogh currently only supports Unix/Linux/OSX
 
-Python 2.x
-
-git-cl: http://neugierig.org/software/git/?r=git-cl
+Python 2.4 or higher
 
 git: http://git-scm.com
 
 
 INSTALLATION INSTRUCTIONS
 -------------------------
-Install git-cl by following its instructions (namely put git-cl and upload.py in
-your path).
 
-Put vangogh in you path.
+Put vangogh and upload.py in you path. If you are using an older version of
+Python than 2.6 (check with 'python -V') then you'll also need to place the
+third_party directory in the same place with the vangogh script.
 
 
 SETUP

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # Copyright (c) 2011, Nathan Wiegand <nathanwiegand@gmail.com>,
 # Keir Mierle <mierle@gmail.com> All Rights Reserved.
@@ -15,21 +15,76 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-# TODO(nathanwiegand): Need to make it work with branches and commit numbers.
-# TODO(nathanwiegand): Add descriptive comments.
-# TODO(nathanwiegand): Get rid of the extraneous output and print the URL
-# prominentaly.
+################################################################################
+# TODO(nathanwiegand):
+# Need to do the following before launch:
+#    1.) Make it work with branches and commit numbers.
+#    2.) Add support for pull request URLs
+#        (e.g. https://github.com/vangogh/vangogh/pull/1)
+#    3.) Detect and bail when we get a bad URL.
+#
+# Need to do the following sometime soon:
+#    1.) Have the decription auto-populated with only the commit information
+#        about the commits since the last merge.
+#    2.) Allow the user to override the reviewer line.
+#    3.) Have the Rietveld server read from a config (search local, then in the
+#        repo) and if none then default to http://codereview.appspot.com
+################################################################################
 
 __author__ = ['nathanwiegand@gmail.com', 'mierle@gmail.com']
 
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import urllib
+import urllib2
+
+try:
+    import upload
+except:
+    print >> sys.stderr, "Missing upload.py."
+    print >> sys.stderr, "Try http://codereview.appspot.com/static/upload.py"
+    sys.exit(1)
+
+try:
+    import json
+except:
+    sys.path.append(os.path.join(sys.path[0], "third_party"))
+    import simplejson as json
+
+def git(commands, use_stdout = False):
+    c = "git %s" % commands
+    f = sys.stdout
+    if not use_stdout:
+        f = subprocess.PIPE
+    process = subprocess.Popen(c.split(), stdout = f, stderr = f)
+
+    output = ""
+    if process.stdout:
+        stdout_output, stderr_output = process.communicate()
+        output = stdout_output
+    process.wait()
+    return output
+
+def check_if_executable_exists(name):
+    """Checks if an executable named 'name' is in the PATH.
+
+    This is necessary because the 'which' command isn't universally portable.
+
+    Args:
+        name: String name of a binary, e.g. 'which'
+    Returns:
+        True if there is an executable with this name anywhere in the system
+        PATH.
+    """
+    for p in os.getenv("PATH").split(os.pathsep):
+        full_path = "%s/%s" % (p, name)
+
+        if os.path.exists(full_path) and os.access(full_path, os.X_OK):
+            return True
+    return False
 
 def get_fork_information(components):
     """Retrieves the JSON metadata about a project.
@@ -49,22 +104,14 @@ def get_fork_information(components):
     url = "https://github.com/api/v2/json/repos/show/%(user)s/%(project)s" \
           % components
 
-    f = urllib.urlopen(url)
-    if f.getcode() != 200:
-        return {}
+    request = urllib2.Request(url)
+    try:
+      f = urllib2.urlopen(request)
+    except urllib2.URLError:
+      return {}
     response = json.loads(f.read())
     f.close()
     return response
-
-def pull_from_head(repo_url, working_path):
-    previous_dir = os.getcwd()
-    os.chdir(working_path)
-
-    command = "git clone --depth=1 %s" % repo_url
-    process = subprocess.Popen(command.split(), stdout = sys.stdout,
-                               stderr = sys.stdout)
-    process.wait()
-    os.chdir(previous_dir)
 
 def read_url(url):
     """Return the contents of a URL.
@@ -80,14 +127,28 @@ def read_url(url):
         string otherwise.
     """
     # pull the new version
-    f = urllib.urlopen(url)
-
-    if f.getcode() != 200:
-        return ""
+    request = urllib2.Request(url)
+    try:
+      f = urllib2.urlopen(request)
+    except urllib2.URLError:
+      return ""
 
     contents = f.read()
     f.close()
     return contents
+
+def read_json_url(url):
+    """Reads the contents of a URL and interprets the JSON response.
+
+    Args:
+        url: The URL to fetch
+    Returns:
+        Dictionary equivalent of the JSON contents of the URL
+    """
+    contents = read_url(url)
+    if contents:
+        return json.loads(contents)
+    return {}
 
 def parse_github_path(url):
     """Interprets a GitHub URL.
@@ -152,6 +213,17 @@ def parse_github_path(url):
         }
 
 def make_github_url(components):
+    """Constructs a GitHub URL to either a file or project.
+
+    Given a dictionary of components that contains the fields 'user', 'host',
+    and 'projects' (optionally 'commit' and 'file'), generate a GitHub URL.
+
+    Args:
+        components: A dictionary that must contain 'host', 'user', and
+        'project'.
+    Returns:
+        String URL to a GitHub project or a GitHub file.
+    """
     if components['type'] == 'file':
         return ("https://%(host)s/%(user)s/%(project)s/"
                 "%(github_view_type)s/%(commit)s/%(file)s") % components
@@ -160,15 +232,28 @@ def make_github_url(components):
                 "%(tree)s/%(branch)s") % components
 
 def create_git_repo():
-    print "Creating a git repo"
+    """Creates a fresh Git repository in a temporary directory.
+
+    Returns:
+        String path to the new Git repository.
+    """
+    print "Creating a temporary git repository."
     path = tempfile.mkdtemp()
-    previous_cwd = os.getcwd()
     os.chdir(path)
 
-    subprocess.call("git init".split())
+    git("init")
     return path
 
 def write_file_and_commit(name, contents):
+    """Create a file with a specified name and contents, and then commit it to
+    the repository.
+
+    Args:
+        name: The string file name of the new file
+        contents: The string contents of the new file
+    Returns:
+        True on success
+    """
     print "Writing a file of %d bytes" % len(contents)
     o = open(name, 'w')
     print >> o, contents
@@ -176,21 +261,36 @@ def write_file_and_commit(name, contents):
 
     print "Committing new file to repo"
 
-    command = "git add %s" % name
-    subprocess.call(command.split())
-    command = "git commit -am 'review'"
-    subprocess.call(command.split())
+    git("add %s" % name)
+
+    git("commit -am 'review'")
     return True
 
 def create_subdirectories(components, path):
+    """Creates subdirectories corresponding to the directory structure of the
+    GitHub repository.
+
+    Returns:
+      Nothing
+    """
     file_path = components["file"]
+    if file_path.find(os.sep) < 0:
+      # This is already a file
+      os.chdir(path)
+      return
     dirs = os.path.dirname(file_path)
 
     # create the directory
     os.makedirs(dirs)
     os.chdir(path + "/" + dirs)
 
-def pull_file_and_head_version(components, mainline_components, path):
+def pull_file_and_head_version(components, mainline_components):
+    """Copies a file from two branches and commits them to the same repo.
+
+    This copyies the 'original' file to the repo, followed by the 'new' file.
+    Because of this, the diff between versions of this file will now correspond
+    to the diff between the two versions: 'original' and 'new'.
+    """
     print "Copying %s" % components["file"]
     url = make_github_url(components)
 
@@ -208,42 +308,114 @@ def pull_file_and_head_version(components, mainline_components, path):
     write_file_and_commit(file_name, mainline_contents)
     write_file_and_commit(file_name, contents)
 
-def upload_to_codereview(mainline_components):
-    command = ('git cl config https://github.com/%(user)s/%(project)s'
-               '/raw/master/codereview.settings' % mainline_components)
-    subprocess.call(command.split())
+def upload_to_codereview(components):
+    """Uploads the diffs to the Reitveld instance.
 
-    command = 'git cl upload -m "review" HEAD^'
-    subprocess.call(command.split())
+    Args:
+        mainline_components: Dict containing the fields 'user' and 'project'
+        which correspond to the mainline project's username and project.
+    """
+    diff = "HEAD^"
+    if components['type'] != "file":
+        diff = "master"
+
+    description = git('log --pretty=format:%s ' + diff)
+    subject = ""
+    if len(description.splitlines()) > 0:
+        subject = description.splitlines()[0]
+
+    cc = ""
+    # TODO(nathanwiegand): Have both of these values be overridable.
+    user_email = git('config --global user.email')
+    server = 'codereview.appspot.com'
+    # TODO(nathanwiegand): Is this the correct thing to do? To make the person
+    # who ran the script the reviewer and the person who owns the target repo be
+    # CCd?
+    if "email" in components:
+        cc = (components['email'])
+
+    issue, patchset = upload.RealMain(['upload',
+                                       '--assume_yes',
+                                       '--server', server,
+                                       '--email', user_email,
+                                       '--message', subject,
+                                       '--description', description,
+                                       '--reviewers', user_email,
+                                       '--cc', cc,
+                                       '--quiet',
+                                       diff])
+    print "Successfuly created codereview at:"
+    print "    http://%s/%s" % (server, issue)
 
 def clean_up(path):
-    print "Deleting %s" % path
+    """Delete the temporary directory specified by 'path'
+
+    Args:
+        path: String path to the temporary directory which will be deleted.
+    """
     shutil.rmtree(path)
 
 def pull_branches(components, mainline_components):
+    """Pulls two branches, one ontop of the other.
+
+    This allows us to diff all files in one branch, 'components', with the
+    another, 'original'.
+
+    Args:
+        components: Dict specifying the new branch. Must contain 'user' and
+              'project'
+        mainline_components: Dict specifying the original branch. Must contain
+              'user' and 'project'
+    """
     mainline_url = 'git@github.com:%(user)s/%(project)s.git' % \
         mainline_components
 
     url = 'git@github.com:%(user)s/%(project)s.git' % components
+    print "Pulling from: " , mainline_url
+    git('pull %s master' % mainline_url)
 
-    command = 'git pull %s master' % mainline_url
-    subprocess.call(command.split())
+    git('checkout -b %s ' % components['user'])
 
-    command = 'git pull %s master' % url
-    subprocess.call(command.split())
+    print "Pulling from: " , url
+    git('pull %s master' % url)
+
+def get_user_information(components):
+    user_info = read_json_url("https://api.github.com/users/%(user)s" %
+                              components)
+    return user_info
+
+def cat_with_default(argv):
+    if len(argv) != 2:
+        print >> sys.stderr, ("usage: vangogh --cat_with_default "
+                              "requires exactly one argument")
+        return 1
+    file_name = argv[1]
+
+    if not os.path.exists(file_name):
+        print >> sys.stderr, ("%s doesn't exist" % file_name)
+        return 1
+    f = open(file_name, 'r')
+    contents = f.read()
+    f.close()
+
+    stripcomment_re = re.compile(r'^#.*$', re.MULTILINE)
+    contents = stripcomment_re.sub('', contents).strip()
+    if not contents:
+        f = open(file_name, 'w')
+        print >> f, "A vangogh code review"
+        f.close()
+    return 0
 
 def main(argv):
+    if len(argv) > 2 and argv[1] == "--cat_with_default":
+        return cat_with_default(argv[1:])
+
     if len(argv) != 2:
         print >> sys.stderr, "usage: vangough <url>"
         return 1
 
-    if os.system('which git-cl') != 0:
-        # This is not portable to Windows.
-        print >> sys.stderr, "ERROR: git-cl not in path."
-        return 1
-
-    if os.system('which upload.py') != 0:
-        print >> sys.stderr, "ERROR: upload.py not in path."
+    if not check_if_executable_exists('git'):
+        print >> sys.stderr, "ERROR: git not in path."
         return 1
 
     file_url = argv[1]
@@ -252,31 +424,41 @@ def main(argv):
     fork_info = get_fork_information(components)
     mainline_components = components.copy()
 
-    if 'repository' in fork_info and 'parent' in fork_info['repository']:
-        user_project_regex = re.compile("([^/]+)/(.*)$")
-        user_project = user_project_regex.match(
-                fork_info['repository']['parent'])
-        if not user_project:
-            print "Couldn't parse response from github."
-            return 1
-        mainline_components['user'] = user_project.group(1)
-        mainline_components['project'] = user_project.group(2)
-        mainline_components['branch'] = 'master'
-    else:
+    if 'repository' not in fork_info or 'parent' not in fork_info['repository']:
         print "vangogh only operates on projects which are forks."
         return 1
+    user_project_regex = re.compile("([^/]+)/(.*)$")
+    user_project = user_project_regex.match(
+            fork_info['repository']['parent'])
+    if not user_project:
+        print "Couldn't parse response from github."
+        return 1
+    mainline_components['user'] = user_project.group(1)
+    mainline_components['project'] = user_project.group(2)
+    mainline_components['branch'] = 'master'
+
+    user_info = get_user_information(components)
+    mainline_user_info = get_user_information(mainline_components)
+
+    if 'email' in user_info:
+        components['email'] = user_info['email']
+
+    if 'email' in mainline_user_info:
+        mainline_components['email'] = mainline_user_info['email']
+
     repo_path = create_git_repo()
 
     if components['type'] == 'file':
         # Change the 'github_view_type' to 'raw' so that we get the raw file
         # instead of the github html marked up version.
         components['github_view_type'] = 'raw'
+        mainline_components['github_view_type'] = 'raw'
         create_subdirectories(components, repo_path)
-        pull_file_and_head_version(components, mainline_components, repo_path)
-        upload_to_codereview(mainline_components)
+        pull_file_and_head_version(components, mainline_components)
+        upload_to_codereview(components)
     elif components['type'] == 'branch' or components['type'] == 'repo':
         pull_branches(components, mainline_components)
-        upload_to_codereview(mainline_components)
+        upload_to_codereview(components)
     clean_up(repo_path)
 
 if __name__ == "__main__":
